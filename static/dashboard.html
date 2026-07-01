@@ -1423,7 +1423,7 @@ td a:hover{color:var(--accent)}
           <div class="search-actions">
             <button class="btn btn-primary" id="btnSearch" onclick="doSearch()">搜索</button>
             <button class="btn btn-success" onclick="batchSearch()">批量搜索</button>
-            <button class="btn btn-primary" onclick="batchApplyAll(1)">一键投递</button>
+            <button class="btn btn-primary" onclick="batchApplyAll(1)">一键投递30次</button>
             <button class="btn btn-ghost btn-sm" onclick="batchApplyAll(5)" title="多页扫描+跳过已发公司+跳过HR不活跃">翻5页 ▸</button>
           </div>
         </div>
@@ -1596,7 +1596,7 @@ td a:hover{color:var(--accent)}
         <div id="advancedSettings" style="display:none;margin-top:12px;">
 
           <h4 style="font-size:13px;margin:12px 0 6px;color:var(--text-2);">频率限制</h4>
-          <div class="setting-row"><label>每日投递上限</label><input type="number" id="setDailyLimit" value="15" min="1" max="30"></div>
+          <div class="setting-row"><label>每日投递上限</label><input type="number" id="setDailyLimit" value="120" min="1" max="200"></div>
           <div class="setting-row"><label>回复间隔(秒)</label><div style="display:flex;gap:6px;flex:1;align-items:center;"><input type="number" id="setMinDelay" value="30" min="10" max="300" style="flex:1;"><span style="color:var(--text-3);">—</span><input type="number" id="setMaxDelay" value="120" min="20" max="600" style="flex:1;"></div></div>
           <h4 style="font-size:13px;margin:12px 0 6px;color:var(--text-2);">智能过滤</h4>
           <div class="setting-row"><label>HR 不活跃跳过</label><div style="display:flex;gap:6px;align-items:center;"><select id="setFilterInactiveHr"><option value="true">开启</option><option value="false">关闭</option></select><span style="font-size:11px;color:var(--text-3);">阈值</span><input type="number" id="setMaxHrInactiveDays" value="7" min="1" max="60" style="width:50px;"><span style="font-size:11px;color:var(--text-3);">天</span></div></div>
@@ -2073,8 +2073,10 @@ function batchApplyAll(maxPages){
     }).catch(e=>{el.innerHTML='<div class="status-banner" style="margin-top:8px;">失败: '+esc(e.message)+'</div>';toast('失败: '+e.message,'error');});
     return;
   }
-  if(!confirm('确定投递 '+pending.length+' 条？'))return;
-  doBatchApply(pending.map(j=>j.job_url),'searchStatus');
+  // 一键投递30次：最多投递30个
+  let target = pending.slice(0, 30);
+  if(!confirm('确定投递 '+target.length+' 条？'))return;
+  doBatchApply(target.map(j=>j.job_url),'searchStatus');
 }
 async function batchApplyPending(){
   let el=document.getElementById('applyProgress');el.innerHTML='<div style="display:flex;align-items:center;gap:8px;color:var(--text-2);"><div class="spinner"></div> 加载中...</div>';

@@ -34,6 +34,7 @@ from boss_state import (
     get_today_auto_reply_count,
     find_conversation_by_hr_name,
     get_daily_stats,
+    has_company_been_applied,
 )
 
 # ── 选择器配置（BOSS UI 改版时只改这里，也可通过设置表覆盖）──
@@ -132,7 +133,7 @@ def _merge_selectors():
 _merge_selectors()
 
 # ── 绝对上限 ──
-MAX_APPLY_PER_DAY = 30
+MAX_APPLY_PER_DAY = 120
 MAX_AUTO_REPLY_PER_DAY = 200
 
 
@@ -417,12 +418,37 @@ class BossAutomation(BossScraper):
             print(f"  ❌ 投递失败: {e}")
             return {"success": False, "message": str(e)}
 
-    def apply_batch(self, job_urls: List[str], greeting_template: Optional[str] = None) -> List[dict]:
-        """批量投递，带间隔延迟。可通过设置 batch_delay_sec 控制间隔。"""
+    def apply_batch(
+        self,
+        job_urls: List[str],
+        greeting_template: Optional[str] = None,
+        dedup_company: bool = False,
+    ) -> List[dict]:
+        """批量投递，带间隔延迟。可通过设置 batch_delay_sec 控制间隔。
+        每项 result 含 'skipped_company' 字段标记是否因公司去重被跳过。"""
         results = []
         min_delay = int(get_setting("batch_delay_min_sec", "30"))
         max_delay = int(get_setting("batch_delay_max_sec", "90"))
         for i, url in enumerate(job_urls):
+            # 公司去重检查
+            if dedup_company:
+                existing = get_application_by_url(url)
+                if existing:
+                    company = existing.get("company", "")
+                    company_id = existing.get("company_id", "")
+                    if has_company_been_applied(company, company_id)["applied"]:
+                        print(f"  ⏭️ 跳过 {company}（已投递过）")
+                        results.append(
+                            {
+                                "success": False,
+                                "skipped_company": True,
+                                "reason": "company_dedup",
+                                "company": company,
+                                "job_url": url,
+                            }
+                        )
+                        continue
+
             if i > 0:
                 delay = random.uniform(min_delay, max_delay)
                 print(f"  ⏳ 等待 {delay:.0f}s 后投递下一条...")
@@ -433,6 +459,7 @@ class BossAutomation(BossScraper):
 
             if not result["success"] and "上限" in result.get("message", ""):
                 break
+
         return results
 
     # ══════════════════════════════════════
@@ -1001,21 +1028,25 @@ class BossAutomation(BossScraper):
         print(f"  [扫描] 从当前页面提取到 {len(jobs)} 个岗位")
         return jobs
 
-    def scan_and_apply_current_page(self, greeting_template: Optional[str] = None) -> dict:
-        """扫描当前页面全部岗位 → 一键批量投递。"""
+    def scan_and_apply_current_page(
+        self, greeting_template: Optional[str] = None, dedup_company: bool = False
+    ) -> dict:
+        """扫描当前页面全部岗位 → 一键批量投递。支持公司去重。"""
         jobs = self.scan_current_page()
         if not jobs:
-            return {"success": False, "message": "当前页面未找到任何岗位", "scanned": 0, "applied": 0}
+            return {"success": False, "message": "当前页面未找到任何岗位", "scanned": 0, "applied": 0, "skipped_company": 0}
         urls = [j["url"] for j in jobs if j.get("url")]
         if not urls:
-            return {"success": False, "message": "扫描到的岗位没有有效URL", "scanned": len(jobs), "applied": 0}
-        results = self.apply_batch(urls, greeting_template)
+            return {"success": False, "message": "扫描到的岗位没有有效URL", "scanned": len(jobs), "applied": 0, "skipped_company": 0}
+        results = self.apply_batch(urls, greeting_template, dedup_company=dedup_company)
         success_count = sum(1 for r in results if r.get("success"))
+        skipped_company = sum(1 for r in results if r.get("skipped_company"))
         return {
             "success": success_count > 0,
             "message": f"扫描 {len(jobs)} 个岗位，投递 {success_count}/{len(urls)}",
             "scanned": len(jobs),
             "applied": success_count,
+            "skipped_company": skipped_company,
             "results": results,
         }
 

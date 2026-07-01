@@ -53,6 +53,7 @@ from boss_state import (
     remove_from_shortlist,
     list_shortlists,
     is_in_shortlist,
+    has_company_been_applied,
 )
 from boss_replier import generate_greeting
 
@@ -207,10 +208,12 @@ def _normalize_job_url(url: str) -> str:
 def _search_job_payload(job: dict, application: Optional[dict] = None) -> dict:
     """统一搜索结果和数据库记录的字段名，方便前端直接渲染。"""
     application = application or {}
+    company = application.get("company") or job.get("company", "")
+    company_id = application.get("company_id") or job.get("company_id", "")
     return {
         "id": application.get("id"),
         "job_title": application.get("job_title") or job.get("title", ""),
-        "company": application.get("company") or job.get("company", ""),
+        "company": company,
         "salary": application.get("salary") or job.get("salary", ""),
         "job_url": application.get("job_url") or _normalize_job_url(job.get("url", "")),
         "city": application.get("city") or job.get("city", ""),
@@ -220,6 +223,8 @@ def _search_job_payload(job: dict, application: Optional[dict] = None) -> dict:
         "hr_title": application.get("hr_title") or job.get("hr_title", ""),
         "description": application.get("description") or job.get("description", ""),
         "status": application.get("status") or ("pending" if job.get("url") else "missing_url"),
+        "company_id": company_id,
+        "company_already_applied": has_company_been_applied(company, company_id)["applied"],
     }
 
 
@@ -265,6 +270,10 @@ class ApplyBatchRequest(BaseModel):
 
 class ScanAndApplyRequest(BaseModel):
     greeting: Optional[str] = None
+    max_pages: Optional[int] = 1
+    dedup_company: Optional[bool] = False
+    filter_inactive_hr: Optional[bool] = False
+    inactive_days: Optional[int] = 7
 
 
 class AnalyzeRequest(BaseModel):
@@ -618,6 +627,10 @@ async def selectors_status():
 @app.get("/api/jobs")
 def list_jobs(status: Optional[str] = None, limit: int = 100):
     jobs = list_applications(status, limit)
+    for j in jobs:
+        j["company_already_applied"] = has_company_been_applied(
+            j.get("company", ""), j.get("company_id", "")
+        )["applied"]
     return {"jobs": jobs, "total": len(jobs)}
 
 
@@ -786,7 +799,7 @@ async def scan_current_page():
 
 @app.post("/api/jobs/scan-and-apply")
 async def scan_and_apply(req: ScanAndApplyRequest = ScanAndApplyRequest()):
-    """扫描当前页面全部岗位 → 一键批量投递。"""
+    """扫描当前页面全部岗位 → 一键批量投递。支持公司去重（dedup_company）。"""
     if not automation:
         raise HTTPException(status_code=503, detail="浏览器未启动")
 
@@ -794,14 +807,31 @@ async def scan_and_apply(req: ScanAndApplyRequest = ScanAndApplyRequest()):
     if get_today_application_count() >= daily_limit:
         raise HTTPException(status_code=429, detail="已达到今日投递上限")
 
-    result = await _run_pw(automation.scan_and_apply_current_page, req.greeting)
+    result = await _run_pw(
+        automation.scan_and_apply_current_page,
+        req.greeting,
+        req.dedup_company,
+    )
     await broadcast_ws(
         {
             "type": "scan_apply_complete",
             "scanned": result.get("scanned", 0),
             "applied": result.get("applied", 0),
+            "skipped_company": result.get("skipped_company", 0),
         }
     )
+    return result
+
+
+class CompanyCheckRequest(BaseModel):
+    company: str
+    company_id: Optional[str] = ""
+
+
+@app.post("/api/company/check-applied")
+def check_company_applied(req: CompanyCheckRequest):
+    """检查某个公司是否已经投递过。"""
+    result = has_company_been_applied(req.company, req.company_id or "")
     return result
 
 

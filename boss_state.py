@@ -5,6 +5,7 @@ SQLite 数据层 —— 投递记录、聊天消息、设置、每日统计。
 
 import sqlite3
 import threading
+import re
 from datetime import date, datetime
 from pathlib import Path
 from typing import Optional, List, Dict, Any
@@ -133,7 +134,7 @@ def init_db():
         "greeting_template": "您好！看到贵司在招{job_title}，很感兴趣。PS：正在和你聊天的这个AI工具是我自己开发的——就当是我的技术名片了",
         "greeting_enabled": "true",
         "ai_reply_style": "professional",
-        "daily_apply_limit": "15",
+        "daily_apply_limit": "120",
         "auto_reply_enabled": "false",
         "min_reply_delay_sec": "15",
         "max_reply_delay_sec": "20",
@@ -166,8 +167,8 @@ def add_application(job: dict) -> int:
     db = get_db()
     cur = db.execute(
         """INSERT OR IGNORE INTO applications
-           (job_title, company, salary, job_url, city, experience, education, hr_name, hr_title, description)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+           (job_title, company, salary, job_url, city, experience, education, hr_name, hr_title, description, company_id)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
         (
             job.get("title", ""),
             job.get("company", ""),
@@ -179,6 +180,7 @@ def add_application(job: dict) -> int:
             job.get("hr_name", ""),
             job.get("hr_title", ""),
             job.get("description", ""),
+            job.get("company_id", ""),
         ),
     )
     db.commit()
@@ -593,6 +595,122 @@ def is_in_shortlist(job_url: str) -> bool:
     row = get_db().execute("SELECT COUNT(*) as cnt FROM shortlists WHERE job_url=?", (job_url,)).fetchone()
     return row["cnt"] > 0 if row else False
 
+
+# ══════════════════════════════════════
+#  公司名归一化 & 去重
+# ══════════════════════════════════════
+
+_COMPANY_SUFFIXES = re.compile(
+    r"(有限|有限责任|股份|集团|控股)?(公司|企业|厂|店|馆|所|中心|社)?$"
+)
+_COMPANY_BRACKETS = re.compile(r"[\(（][^)）]*[\)）]")
+_COMPANY_PREFIX = re.compile(r"^[京津沪渝冀豫云辽黑湘皖苏浙赣鄂桂甘晋内蒙古陕吉闽贵粤青川藏琼宁新]{1,2}省?")
+
+
+def _normalize_company_name(name: str) -> str:
+    """归一化公司名：去前缀省份、去后缀(有限/股份/集团)公司、去括号尾注。"""
+    name = (name or "").strip()
+    if not name:
+        return ""
+    name = _COMPANY_PREFIX.sub("", name).strip()
+    name = _COMPANY_BRACKETS.sub("", name).strip()
+    name = _COMPANY_SUFFIXES.sub("", name).strip()
+    return name if len(name) >= 2 else name
+
+
+def has_company_been_applied(company: str, company_id: str = "") -> dict:
+    """
+    检查该公司是否已经投递过。
+    规则：applications 中存在同公司名且状态为 applied 或 replied。
+    :return: {"applied": bool, "count": int}
+    """
+    db = get_db()
+    name = (company or "").strip()
+    if not name:
+        return {"applied": False, "count": 0}
+
+    # 1) 优先用 company_id 精确匹配
+    if company_id:
+        row = db.execute(
+            "SELECT COUNT(*) as cnt FROM applications WHERE company_id=? AND status IN ('applied','replied')",
+            (company_id,),
+        ).fetchone()
+        if row and row["cnt"] > 0:
+            return {"applied": True, "count": row["cnt"]}
+
+    # 2) 精确公司名匹配
+    row = db.execute(
+        "SELECT COUNT(*) as cnt FROM applications WHERE company=? AND status IN ('applied','replied')",
+        (name,),
+    ).fetchone()
+    if row and row["cnt"] > 0:
+        return {"applied": True, "count": row["cnt"]}
+
+    # 3) 归一化后模糊匹配：取出所有 applied/replied 的公司名，逐一比对
+    rows = db.execute(
+        "SELECT DISTINCT company FROM applications WHERE status IN ('applied','replied')"
+    ).fetchall()
+    norm_target = _normalize_company_name(name)
+    if len(norm_target) < 2:
+        return {"applied": False, "count": 0}
+
+    matched = []
+    for r in rows:
+        existing = (r["company"] or "").strip()
+        if not existing:
+            continue
+        norm_existing = _normalize_company_name(existing)
+        # 双向包含：A 包含 B 或 B 包含 A（且较短名长度≥2）
+        if (
+            norm_existing
+            and len(norm_existing) >= 2
+            and (norm_existing in norm_target or norm_target in norm_existing)
+        ):
+            count_row = db.execute(
+                "SELECT COUNT(*) as cnt FROM applications WHERE company=? AND status IN ('applied','replied')",
+                (existing,),
+            ).fetchone()
+            if count_row and count_row["cnt"] > 0:
+                matched.append(count_row["cnt"])
+
+    total = sum(matched)
+    return {"applied": total > 0, "count": total}
+
+
+def clean_open_positions(raw: str, salary_filter: str = "") -> tuple:
+    """
+    清洗BOSS直聘"在招岗位"原始文本。
+    返回: (清理后的岗位串, 岗位数)
+    """
+    text = (raw or "").strip()
+    # 去掉薪资片段 如 "5-7K"、"10-15K"
+    text = re.sub(r"\d+[-~]\d+K", "", text)
+    # 去掉UI噪声词
+    noise = re.compile(r"(职位搜索|更多|举报|收藏|分享|申请|投递|沟通)")
+    text = noise.sub("", text)
+    # 按分隔符拆开、去重、去空、去内部空格
+    parts = re.split(r"[、，,;；\n]+", text)
+    seen = set()
+    cleaned = []
+    for p in parts:
+        p = p.strip().replace(" ", "").replace("　", "")
+        if p and len(p) > 1 and p not in seen:
+            seen.add(p)
+            cleaned.append(p)
+    return ("、".join(cleaned), len(cleaned))
+
+
+# ── company_id 列迁移（兼容旧表）──
+def _migrate_company_id_column():
+    db = get_db()
+    try:
+        db.execute("ALTER TABLE applications ADD COLUMN company_id TEXT")
+        db.commit()
+    except sqlite3.OperationalError:
+        pass
+
+
+_migrate_company_id_column()
 
 # 启动时初始化
 init_db()
