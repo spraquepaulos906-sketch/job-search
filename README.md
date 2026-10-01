@@ -1,6 +1,6 @@
 <div align="center">
 
-# lakejobai-job-search
+# Boss小聘
 
 **AI 驱动的 BOSS 直聘智能求职助手 · Web 控制台 + CLI**
 
@@ -10,7 +10,7 @@
 [![License](https://img.shields.io/badge/License-MIT-green.svg?style=flat-square)](LICENSE)
 [![CLI](https://img.shields.io/badge/CLI-18_Commands-ec4899.svg?style=flat-square)](#-cli-命令)
 [![Web](https://img.shields.io/badge/Web-Dark_UI-ec4899.svg?style=flat-square)](#-web-控制台)
-[![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg?style=flat-square)](https://github.com/lake121380-source/lakejobai-job-search/pulls)
+[![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg?style=flat-square)](https://github.com/spraquepaulos906-sketch/job-search/pulls)
 
 [快速开始](#-快速开始) · [Web 控制台](#-web-控制台) · [CLI 命令](#-cli-命令) · [核心能力](#-核心能力) · [AI 配置](#-ai-模型配置) · [API](#-api-端点参考) · [排障](#-诊断与排障) · [架构](#-技术架构)
 
@@ -29,9 +29,9 @@
 
 ---
 
-## 💡 为什么用 lakejobai-job-search
+## 💡 为什么用 Boss小聘
 
-| 传统流程 | lakejobai-job-search |
+| 传统流程 | Boss小聘 |
 |----------|---------------------|
 | 打开网页逐个搜索 | `lakejob search` 一行搜全国 |
 | 手动翻页看薪资 | 福利筛选一键过滤双休五险一金 |
@@ -51,8 +51,8 @@
 ## 📦 安装
 
 ```bash
-git clone https://github.com/lake121380-source/lakejobai-job-search.git
-cd lakejobai-job-search
+git clone https://github.com/spraquepaulos906-sketch/job-search.git
+cd job-search
 pip install -e .              # 含 CLI 入口 lakejob
 playwright install firefox    # 浏览器自动化
 ```
